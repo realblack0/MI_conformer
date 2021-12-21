@@ -1302,6 +1302,7 @@ def exp(args):
         )
 
         if args.use_early_stop is True:
+            raise
             print("\nFirst Training")
             epoch_df = pd.DataFrame()
             for epoch in range(0, max_epochs):
@@ -1452,12 +1453,6 @@ def exp(args):
                     loss_85 = loss_function(out_85, labels)
                     
                     out_ens = model.ensemble_layer(
-                        # out_15.detach(),
-                        # out_25.detach(),
-                        # out_35.detach(),
-                        # out_45.detach(),
-                        # out_65.detach(),
-                        # out_85.detach(),
                         out_15,
                         out_25,
                         out_35,
@@ -1468,14 +1463,11 @@ def exp(args):
                     loss_ens = loss_function(out_ens, labels)
 
                     optimizer.zero_grad()
-                    # loss_15.backward()
-                    # loss_25.backward()
-                    # loss_35.backward()
-                    # loss_45.backward()
-                    # loss_65.backward()
-                    # loss_85.backward()
-                    # loss_ens.backward()
-                    loss = loss_15 + loss_25 + loss_35 + loss_45 + loss_65 + loss_85 + loss_ens
+                    if args.use_amalgamated_loss is True:
+                        loss = loss_15 + loss_25 + loss_35 + loss_45 + loss_65 + loss_85 + loss_ens
+                        raise
+                    elif args.use_amalgamated_loss is False:
+                        loss = loss_ens
                     loss.backward()
                     optimizer.step()
 
@@ -1690,13 +1682,15 @@ if __name__ == "__main__":
         lr_step_size = 300
         lr_gamma = 0.1
         n_inputs = 6
-        device = "cuda:1"
+        device = "cuda:0"
         save_name = f"shallow_ensemble_{which_learning}"
         result_dir = __file__.split("/")[-1].split(".")[0]
         start_try = 2
         repeat = 9
+        use_amalgamated_loss = False
 
     args = Args()
-    for subject in range(1,10):
+    # for subject in range(1,10):
+    for subject in [1,2]:
         args.subject = subject
         exp(args) 
