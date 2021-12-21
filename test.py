@@ -699,10 +699,9 @@ from braindecode.models.util import to_dense_prediction_model
 
 
 class EnsembleLayer(nn.Module):
-    def __init__(self, n_inputs):
+    def __init__(self):
         super().__init__()
-        self.n_inputs = n_inputs
-        self.attns = nn.Parameter(torch.ones(n_inputs) / n_inputs)
+        self.attns = nn.Parameter(torch.ones(6) / 6)
 
     def forward(self, out_15, out_25, out_35, out_45, out_65, out_85):
         assert out_15.shape == out_25.shape
@@ -714,7 +713,7 @@ class EnsembleLayer(nn.Module):
         
         out_cat = torch.stack([out_15, out_25, out_35, out_45, out_65, out_85], dim=1) # (batch, 6, 4)
         out_attn = out_cat * self.attns.view(1, 6, 1) # (batch, 6, 4)
-        out = torch.sum(out_attn, dim=1) # (batch, 4)
+        out = torch.sum(out_cat, dim=1)  # (batch, 4)
         return out
 
 @verbose_func_name
@@ -753,7 +752,7 @@ def make_shallownet_trialwise(kernel_size, padding=0, verbose=True):
     return model
 
 class EnsembleTrialwiseModel(nn.Module):
-    def __init__(self, n_inputs):
+    def __init__(self):
         super().__init__()
         self.model_15 = make_shallownet_trialwise(kernel_size=15, verbose=False)
         self.model_25 = make_shallownet_trialwise(kernel_size=25, verbose=False)
@@ -761,7 +760,7 @@ class EnsembleTrialwiseModel(nn.Module):
         self.model_45 = make_shallownet_trialwise(kernel_size=45, verbose=False)
         self.model_65 = make_shallownet_trialwise(kernel_size=65, verbose=False)
         self.model_85 = make_shallownet_trialwise(kernel_size=85, verbose=False)
-        self.ensemble_layer = EnsembleLayer(n_inputs)
+        self.ensemble_layer = EnsembleLayer()
            
     def forward(self, x):
         out_15 = self.model_15(x) # (batch, 4)
@@ -771,12 +770,12 @@ class EnsembleTrialwiseModel(nn.Module):
         out_65 = self.model_65(x) # (batch, 4)
         out_85 = self.model_85(x) # (batch, 4)
         out = self.ensemble_layer(out_15, out_25, out_35, out_45, out_65, out_85)
-        return out
+        return out 
 
 
 @verbose_func_name
-def make_ensemble_net_trialwise(n_inputs, verbose=True):
-    model = EnsembleTrialwiseModel(n_inputs)
+def make_ensemble_net_trialwise(verbose=True):
+    model = EnsembleTrialwiseModel()
     
     if verbose:
         print(model)
@@ -852,15 +851,13 @@ def trial_pred_from_crop_outputs(outputs):
 
 
 def evaluate_with_dataloader(
-    model, trial_dataloaders, mode, use_tied_loss, which_learning, regularizer=None, prefix=""
+    model, trial_dataloaders, mode, use_tied_loss, which_learning, regularizer=None,
 ):
     if which_learning == "trialwise":
-        return evaluate_trialwise_with_dataloader(model, trial_dataloaders, mode, 
-                                                  regularizer=regularizer, prefix=prefix)
+        return evaluate_trialwise_with_dataloader(model, trial_dataloaders, mode, regularizer)
     elif which_learning == "cropped":
         return evaluate_cropped_with_dataloader(
-            model, trial_dataloaders, mode, use_tied_loss, 
-            regularize=regularizer, prefix=prefix,  # not support regularizer and prefix yet...
+            model, trial_dataloaders, mode, use_tied_loss,  # not support regularizer yet...
         )
 
 
@@ -910,7 +907,7 @@ def evaluate_cropped_with_dataloader(model, trial_dataloaders, mode, use_tied_lo
             }
 
 
-def evaluate_trialwise_with_dataloader(model, trial_dataloaders, mode, regularizer=None, prefix=""):
+def evaluate_trialwise_with_dataloader(model, trial_dataloaders, mode, regularizer=None):
     """
     Args
     ----
@@ -942,15 +939,15 @@ def evaluate_trialwise_with_dataloader(model, trial_dataloaders, mode, regulariz
 
     if regularizer:
         return {
-            f"{prefix}{mode}_acc": acc.item(),
-            f"{prefix}{mode}_ce_loss": ce_loss.item(),
-            f"{prefix}{mode}_reg_loss": regularizer(model).item()
+            f"{mode}_acc": acc.item(),
+            f"{mode}_ce_loss": ce_loss.item(),
+            f"{mode}_reg_loss": regularizer(model).item()
         }
         
     else:
         return {
-            f"{prefix}{mode}_acc": acc.item(),
-            f"{prefix}{mode}_ce_loss": ce_loss.item(),
+            f"{mode}_acc": acc.item(),
+            f"{mode}_ce_loss": ce_loss.item(),
         }
 
 
@@ -1254,12 +1251,12 @@ def exp(args):
     }
 
     results = []
-    for i in range(args.start_try, args.start_try + args.repeat):
+    for i in range(1, 1 + args.repeat):
         print("\n# TRY", i, "\n")
         # 6. Model
 
         # In[18]:
-        model = make_ensemble_net_trialwise(n_inputs=args.n_inputs, verbose=True)
+        model = make_ensemble_net_trialwise(verbose=True)
 
         model = model.to(device)
 
@@ -1302,7 +1299,6 @@ def exp(args):
         )
 
         if args.use_early_stop is True:
-            raise
             print("\nFirst Training")
             epoch_df = pd.DataFrame()
             for epoch in range(0, max_epochs):
@@ -1434,40 +1430,10 @@ def exp(args):
                 # Train
                 model.train()
                 for inputs, labels, _ in second_training_dataloader: # second_training_dataloader is consists of training and validation data
-                    out_15 = model.model_15(inputs)
-                    loss_15 = loss_function(out_15, labels)
-                    
-                    out_25 = model.model_25(inputs)
-                    loss_25 = loss_function(out_25, labels)
-                    
-                    out_35 = model.model_35(inputs)
-                    loss_35 = loss_function(out_35, labels)
-                    
-                    out_45 = model.model_45(inputs)
-                    loss_45 = loss_function(out_45, labels)
-                    
-                    out_65 = model.model_65(inputs)
-                    loss_65 = loss_function(out_65, labels)
-                    
-                    out_85 = model.model_85(inputs)
-                    loss_85 = loss_function(out_85, labels)
-                    
-                    out_ens = model.ensemble_layer(
-                        out_15,
-                        out_25,
-                        out_35,
-                        out_45,
-                        out_65,
-                        out_85,
-                    )
-                    loss_ens = loss_function(out_ens, labels)
+                    outputs = model(inputs)
+                    loss = loss_function(outputs, labels)
 
                     optimizer.zero_grad()
-                    if args.use_amalgamated_loss is True:
-                        loss = loss_15 + loss_25 + loss_35 + loss_45 + loss_65 + loss_85 + loss_ens
-                        raise
-                    elif args.use_amalgamated_loss is False:
-                        loss = loss_ens
                     loss.backward()
                     optimizer.step()
 
@@ -1475,136 +1441,24 @@ def exp(args):
 
 
                 # Evaluation
-                evaluation_15_tr = evaluate_with_dataloader(
-                    model.model_15,
-                    trial_dataloaders={"tr":second_training_dataloader},
-                    mode="tr",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="15_"
-                )
-                evaluation_15_te = evaluate_with_dataloader(
-                    model.model_15,
-                    trial_dataloaders=trial_dataloaders,
-                    mode="te",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="15_"
-                )
-                
-                evaluation_25_tr = evaluate_with_dataloader(
-                    model.model_25,
-                    trial_dataloaders={"tr":second_training_dataloader},
-                    mode="tr",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="25_"
-                )
-                evaluation_25_te = evaluate_with_dataloader(
-                    model.model_25,
-                    trial_dataloaders=trial_dataloaders,
-                    mode="te",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="25_"
-                )
-                
-                evaluation_35_tr = evaluate_with_dataloader(
-                    model.model_35,
-                    trial_dataloaders={"tr":second_training_dataloader},
-                    mode="tr",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="35_"
-                )
-                evaluation_35_te = evaluate_with_dataloader(
-                    model.model_35,
-                    trial_dataloaders=trial_dataloaders,
-                    mode="te",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="35_"
-                )
-                
-                evaluation_45_tr = evaluate_with_dataloader(
-                    model.model_45,
-                    trial_dataloaders={"tr":second_training_dataloader},
-                    mode="tr",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="45_"
-                )
-                evaluation_45_te = evaluate_with_dataloader(
-                    model.model_45,
-                    trial_dataloaders=trial_dataloaders,
-                    mode="te",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="45_"
-                )
-                
-                evaluation_65_tr = evaluate_with_dataloader(
-                    model.model_65,
-                    trial_dataloaders={"tr":second_training_dataloader},
-                    mode="tr",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="65_"
-                )
-                evaluation_65_te = evaluate_with_dataloader(
-                    model.model_65,
-                    trial_dataloaders=trial_dataloaders,
-                    mode="te",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="65_"
-                )
-                
-                evaluation_85_tr = evaluate_with_dataloader(
-                    model.model_85,
-                    trial_dataloaders={"tr":second_training_dataloader},
-                    mode="tr",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="85_"
-                )
-                evaluation_85_te = evaluate_with_dataloader(
-                    model.model_85,
-                    trial_dataloaders=trial_dataloaders,
-                    mode="te",
-                    use_tied_loss=use_tied_loss,
-                    which_learning=which_learning,
-                    prefix="85_"
-                )
-                
-                evaluation_ens_tr = evaluate_with_dataloader(
+                evaluation_tr = evaluate_with_dataloader(
                     model,
                     trial_dataloaders={"tr":second_training_dataloader},
                     mode="tr",
                     use_tied_loss=use_tied_loss,
                     which_learning=which_learning,
-                    prefix=""
                 )
-                evaluation_ens_te = evaluate_with_dataloader(
+                evaluation_te = evaluate_with_dataloader(
                     model,
                     trial_dataloaders=trial_dataloaders,
                     mode="te",
                     use_tied_loss=use_tied_loss,
                     which_learning=which_learning,
-                    prefix=""
                 )
 
                 assert len(epoch_df) == epoch
                 epoch_df = epoch_df.append(
-                    dict(
-                        **evaluation_15_tr, **evaluation_15_te,
-                        **evaluation_25_tr, **evaluation_25_te,
-                        **evaluation_35_tr, **evaluation_35_te,
-                        **evaluation_45_tr, **evaluation_45_te,
-                        **evaluation_65_tr, **evaluation_65_te,
-                        **evaluation_85_tr, **evaluation_85_te,
-                        **evaluation_ens_tr, **evaluation_ens_te,
-                    ),
+                    dict(**evaluation_tr, **evaluation_te),
                     ignore_index=True,
                 )
                 print("epoch", epoch)
@@ -1681,16 +1535,14 @@ if __name__ == "__main__":
         epoch = 500
         lr_step_size = 300
         lr_gamma = 0.1
-        n_inputs = 6
         device = "cuda:0"
         save_name = f"shallow_ensemble_{which_learning}"
         result_dir = __file__.split("/")[-1].split(".")[0]
-        start_try = 2
-        repeat = 9
-        use_amalgamated_loss = False
+        repeat = 1
+        # weight initialization 1/6
 
     args = Args()
     # for subject in range(1,10):
-    for subject in [1,2]:
+    for subject in [1,2,3]:
         args.subject = subject
         exp(args) 
