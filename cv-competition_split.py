@@ -1196,197 +1196,195 @@ def exp(args):
 
     # In[14]:
     
-    print("\nConcatenate training & test data")
-    X_total = np.concatenate([X_tr, X_te], axis=0)
-    y_total = np.concatenate([y_tr, y_te], axis=0)
-    print("- shape of X_total:", X_total.shape)
-    print("- shape of y_total:", y_total.shape)
-    
     
     print("\nTo tensor")
     # channel first
-    X_total = torch.Tensor(X_total[:, :, None, :, :, :]).to(device) # (n_trials, n_crops, 1, height, width, crop_size)
-    y_total = torch.Tensor(y_total).long().to(device)
-    print("- shape of X_total:", X_total.shape)
-    print("- shape of y_total:", y_total.shape)
+    X_tr = torch.Tensor(X_tr[:, :, None, :, :, :]).to(device) # (n_trials, n_crops, 1, height, width, crop_size)
+    y_tr= torch.Tensor(y_tr).long().to(device)
+    print("- shape of X_tr:", X_tr.shape)
+    print("- shape of y_tr:", y_tr.shape)
+    X_te = torch.Tensor(X_te[:, :, None, :, :, :]).to(device) # (n_trials, n_crops, 1, height, width, crop_size)
+    y_te = torch.Tensor(y_te).long().to(device)
+    print("- shape of X_te:", X_te.shape)
+    print("- shape of y_te:", y_te.shape)
 
     # In[15]:
-    from sklearn.model_selection import StratifiedKFold
+    # from sklearn.model_selection import StratifiedKFold
     
     
-    skf = StratifiedKFold(n_splits=args.n_cv, shuffle=True, random_state=args.random_state)
-    y_trial = y_total[:,0,:]
-    for i_cv, (train_index, test_index) in enumerate(skf.split(X_total.cpu(), y_trial.cpu()), start=1):
-        X_cv_tr = X_total[train_index, :, :, :, :, :] # (n_trainings, n_crops, n_dim, height, width, crop_size)
-        y_cv_tr = y_total[train_index, :, :] # (n_trainings, n_crops, 1)
+    # skf = StratifiedKFold(n_splits=args.n_cv, shuffle=True, random_state=args.random_state)
+    # y_trial = y_total[:,0,:]
+    # for i_cv, (train_index, test_index) in enumerate(skf.split(X_total.cpu(), y_trial.cpu()), start=1):
+    #     X_cv_tr = X_total[train_index, :, :, :, :, :] # (n_trainings, n_crops, n_dim, height, width, crop_size)
+    #     y_cv_tr = y_total[train_index, :, :] # (n_trainings, n_crops, 1)
         
-        X_cv_te = X_total[test_index, :, :, :, :, :] # (n_tests, n_crops, n_dim, height, width, crop_size)
-        y_cv_te = y_total[test_index, :, :] # (n_tests, n_crops, n_dim, height, width, crop_size)
-        
-        # 4. Dataset
+    #     X_cv_te = X_total[test_index, :, :, :, :, :] # (n_tests, n_crops, n_dim, height, width, crop_size)
+    #     y_cv_te = y_total[test_index, :, :] # (n_tests, n_crops, n_dim, height, width, crop_size)
+    
+    # 4. Dataset
 
-        # In[16]:
+    # In[16]:
+    
+    print("\nDataset")
+    if which_learning == "trialwise":
+        raise
+    elif which_learning == "cropped":
+        print(f"\ntraining:")
+        training_dataset_tr = TrainingCropped3dDataset(
+            X=X_tr, 
+            y=y_tr, 
+            crop_stride=args.crop_stride,
+            verbose=True,
+        )
         
-        print("\nDataset")
-        if which_learning == "trialwise":
-            raise
-        elif which_learning == "cropped":
-            print(f"\ntraining: fold {i_cv}")
-            training_dataset_tr = TrainingCropped3dDataset(
-                X=X_cv_tr, 
-                y=y_cv_tr, 
-                crop_stride=args.crop_stride,
-                verbose=True,
+        # evaluation_dataset_tr = EvaluationCropped3dDataset(
+        #     X=X_cv_tr, 
+        #     y=y_cv_tr, 
+        #     crop_stride=args.crop_stride_eval,
+        #     verbose=True,
+        # )
+
+        print(f"\ntest: ")
+        evaluation_dataset_te = EvaluationCropped3dDataset(
+            X_te, 
+            y_te,
+            crop_stride=args.crop_stride_eval, 
+            verbose=True,
+        )
+
+    # 5. Data loader
+
+    # In[17]:
+    dataloaders = {
+        "tr": DataLoader(training_dataset_tr, batch_size=args.batch_size, shuffle=True),
+        "te": DataLoader(evaluation_dataset_te, batch_size=args.batch_size, shuffle=False),
+    }
+
+    results = []
+    for i_try in range(args.i_try_start, args.i_try_start + args.repeat):
+        print("\n# TRY", i_try, "\n")
+        # 6. Model
+
+        # In[18]:
+        model = MultiBranch3DCNN(use_xavier_initialization=args.use_xavier_initialization, input_shape=args.input_shape, verbose=True)
+
+        model = model.to(device)
+
+        # In[19]:
+
+        # 7. Learning strategy
+
+        # In[20]:
+
+        class LossCase:
+            def __init__(self, which_learning):
+                self.which_learning = which_learning
+
+            def __call__(self, outputs, labels):
+                if self.which_learning == "trialwise":
+                    raise
+
+                elif self.which_learning == "cropped":
+                    return F.cross_entropy(outputs, labels.flatten())
+        # In[21]:
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr_init)
+        save_best_model = SaveBestModel()
+        loss_function = LossCase(which_learning=which_learning)
+
+        if args.use_early_stop is True:                
+            early_stop_no_decrease = EarlyStopNoDecrease(
+                column_name=args.early_stop_column, patient_epochs=args.patient_epochs
             )
-            
-            # evaluation_dataset_tr = EvaluationCropped3dDataset(
-            #     X=X_cv_tr, 
-            #     y=y_cv_tr, 
-            #     crop_stride=args.crop_stride_eval,
-            #     verbose=True,
-            # )
+        
+        if args.use_lr_scheduler is True:
+            lr_scheduler =  torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=args.lr_gamma)
+        
+        print("\nTraining")
+        epoch_df = pd.DataFrame()            
+        for epoch in range(0, args.epoch):
+            # Train
+            model.train()
+            for inputs, labels, _ in dataloaders["tr"]:  
+                outputs = model(inputs)
+                loss = loss_function(outputs, labels)
 
-            print(f"\ntest: fold {i_cv}")
-            evaluation_dataset_te = EvaluationCropped3dDataset(
-                X_cv_te, 
-                y_cv_te,
-                crop_stride=args.crop_stride_eval, 
-                verbose=True,
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            # Evaluation
+            evaluation_tr = evaluate_using_dataloaders(
+                model,
+                dataloaders=dataloaders,
+                which_learning=which_learning,
+                mode="tr",
+                prefix="",
+            )
+            evaluation_te = evaluate_using_dataloaders(
+                model,
+                dataloaders=dataloaders,
+                which_learning=which_learning,
+                mode="te",
+                prefix="",
             )
 
-        # 5. Data loader
-
-        # In[17]:
-        dataloaders = {
-            "tr": DataLoader(training_dataset_tr, batch_size=args.batch_size, shuffle=True),
-            "te": DataLoader(evaluation_dataset_te, batch_size=args.batch_size, shuffle=False),
-        }
-
-        results = []
-        for i_try in range(args.i_try_start, args.i_try_start + args.repeat):
-            print("\n# TRY", i_try, "\n")
-            # 6. Model
-
-            # In[18]:
-            model = MultiBranch3DCNN(use_xavier_initialization=args.use_xavier_initialization, input_shape=args.input_shape, verbose=True)
-
-            model = model.to(device)
-
-            # In[19]:
-
-            # 7. Learning strategy
-
-            # In[20]:
-
-            class LossCase:
-                def __init__(self, which_learning):
-                    self.which_learning = which_learning
-
-                def __call__(self, outputs, labels):
-                    if self.which_learning == "trialwise":
-                        raise
-
-                    elif self.which_learning == "cropped":
-                        return F.cross_entropy(outputs, labels.flatten())
-            # In[21]:
-
-            optimizer = torch.optim.Adam(model.parameters(), lr=args.lr_init)
-            save_best_model = SaveBestModel()
-            loss_function = LossCase(which_learning=which_learning)
-
-            if args.use_early_stop is True:                
-                early_stop_no_decrease = EarlyStopNoDecrease(
-                    column_name=args.early_stop_column, patient_epochs=args.patient_epochs
-                )
-            
-            if args.use_lr_scheduler is True:
-                lr_scheduler =  torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=args.lr_gamma)
-            
-            print("\nTraining")
-            epoch_df = pd.DataFrame()            
-            for epoch in range(0, args.epoch):
-                # Train
-                model.train()
-                for inputs, labels, _ in dataloaders["tr"]:  
-                    outputs = model(inputs)
-                    loss = loss_function(outputs, labels)
-
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-
-                # Evaluation
-                evaluation_tr = evaluate_using_dataloaders(
-                    model,
-                    dataloaders=dataloaders,
-                    which_learning=which_learning,
-                    mode="tr",
-                    prefix="",
-                )
-                evaluation_te = evaluate_using_dataloaders(
-                    model,
-                    dataloaders=dataloaders,
-                    which_learning=which_learning,
-                    mode="te",
-                    prefix="",
-                )
-
-                assert len(epoch_df) == epoch
-                epoch_df = epoch_df.append(
-                    dict(
-                        **evaluation_tr, 
-                        **evaluation_te,
-                    ),
-                    ignore_index=True,
-                )
-                print("epoch", epoch)
-                print(epoch_df.iloc[-1])
-                print()
-                
-                save_best_model.if_best_tr_ce_loss(model, optimizer, epoch_df)
-                    
-                if args.use_early_stop is True:
-                    if early_stop_no_decrease(epoch_df):
-                        print("early stop !")
-                        save_best_model.restore_best_model(model, optimizer, epoch_df)
-                        break
-                    
-                if args.use_lr_scheduler is True:
-                    if len(epoch_df) > 1:
-                        if (epoch_df[args.lr_scheduler_column].iloc[-2] <= epoch_df[args.lr_scheduler_column].iloc[-1]):
-                            lr_scheduler.step()
-                            print("\nchange learning rate:", lr_scheduler.get_last_lr(), "\n")
-                    
-            # In[23]:
-
-            print("\nLast Epoch")
+            assert len(epoch_df) == epoch
+            epoch_df = epoch_df.append(
+                dict(
+                    **evaluation_tr, 
+                    **evaluation_te,
+                ),
+                ignore_index=True,
+            )
+            print("epoch", epoch)
             print(epoch_df.iloc[-1])
+            print()
+            
+            save_best_model.if_best_tr_ce_loss(model, optimizer, epoch_df)
+                
+            if args.use_early_stop is True:
+                if early_stop_no_decrease(epoch_df):
+                    print("early stop !")
+                    save_best_model.restore_best_model(model, optimizer, epoch_df)
+                    break
+                
+            if args.use_lr_scheduler is True:
+                if len(epoch_df) > 1:
+                    if (epoch_df[args.lr_scheduler_column].iloc[-2] <= epoch_df[args.lr_scheduler_column].iloc[-1]):
+                        lr_scheduler.step()
+                        print("\nchange learning rate:", lr_scheduler.get_last_lr(), "\n")
+                
+        # In[23]:
 
-            # In[24]:
+        print("\nLast Epoch")
+        print(epoch_df.iloc[-1])
 
-            # epoch_df[["tr_acc", "val_acc", "te_acc"]].plot()
+        # In[24]:
 
-            # In[25]:
+        # epoch_df[["tr_acc", "val_acc", "te_acc"]].plot()
 
-            # epoch_df[["tr_loss", "val_loss", "te_loss"]].plot()
+        # In[25]:
 
-            # In[26]:
+        # epoch_df[["tr_loss", "val_loss", "te_loss"]].plot()
 
-            # epoch_df[["tr_ce_loss", "val_ce_loss", "te_ce_loss"]].plot()
+        # In[26]:
 
-            # In[27]:
+        # epoch_df[["tr_ce_loss", "val_ce_loss", "te_ce_loss"]].plot()
 
-            result_name = f"{args.result_dir}/{save_name}_subject{subject}_cv{i_cv}_try{i_try}"
-            epoch_df.to_csv(result_name + ".csv")
-            torch.save(model.state_dict(), result_name + ".h5")
+        # In[27]:
 
-            # In[ ]:
-            results.append(round(epoch_df["te_acc"].iloc[-1], 2))
+        result_name = f"{args.result_dir}/{save_name}_subject{subject}_try{i_try}"
+        epoch_df.to_csv(result_name + ".csv")
+        torch.save(model.state_dict(), result_name + ".h5")
 
-        print(f"\ncv {i_cv}/{args.n_cv} :{args.repeat} results (te_acc)")
-        for i_try in range(1, 1 + args.repeat):
-            print(f"{i_try} try : {results[i_try-1]}")
-        print(f"mean : {np.mean(results):.2f} ± {np.std(results):.2f}")
+        # In[ ]:
+        results.append(round(epoch_df["te_acc"].iloc[-1], 2))
+
+    print(f"\n{args.n_cv} :{args.repeat} results (te_acc)")
+    for i_try in range(1, 1 + args.repeat):
+        print(f"{i_try} try : {results[i_try-1]}")
+    print(f"mean : {np.mean(results):.2f} ± {np.std(results):.2f}")
 
 
 
@@ -1435,7 +1433,7 @@ if __name__ == "__main__":
         which_learning = "cropped"
         epoch = 500
         batch_size = 60
-        device = "cuda:0"
+        device = "cuda:2"
         # early stop
         use_early_stop = True
         early_stop_column = "tr_ce_loss"
@@ -1446,14 +1444,13 @@ if __name__ == "__main__":
         lr_scheduler_column = "tr_ce_loss"
         lr_gamma = 0.1
         # save
-        save_name = f"multi_branch_3d_cnn_replica_10cv"
+        save_name = f"multi_branch_3d_cnn_split_competition"
         result_dir = __file__.split("/")[-1].split(".")[0]
         # experiment
         i_try_start = 1
-        repeat = 1
+        repeat = 10
 
     args = Args()
-    # for subject in range(1,10):
-    for subject in [1,2]:
+    for subject in range(1,10):
         args.subject = subject
         exp(args) 
